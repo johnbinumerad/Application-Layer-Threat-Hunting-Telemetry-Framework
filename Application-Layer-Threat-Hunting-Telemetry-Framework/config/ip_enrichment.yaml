@@ -1,0 +1,14 @@
+# Lab IP enrichment table (RFC 5737 ranges, RFC 5398 documentation ASNs).
+networks:
+  - cidr: 192.0.2.0/24
+    asn: 64496
+    organization: LabNet-Corp
+    country: US
+  - cidr: 198.51.100.0/24
+    asn: 64497
+    organization: LabNet-Cloud
+    country: DE
+  - cidr: 203.0.113.0/24
+    asn: 64498
+    organization: LabNet-Resi
+    country: BR

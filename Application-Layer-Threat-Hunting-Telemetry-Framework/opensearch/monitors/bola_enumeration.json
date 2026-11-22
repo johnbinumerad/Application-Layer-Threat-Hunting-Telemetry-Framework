@@ -1,0 +1,135 @@
+{
+  "enabled": true,
+  "inputs": [
+    {
+      "search": {
+        "indices": [
+          "appsec-telemetry-*"
+        ],
+        "query": {
+          "aggregations": {
+            "composite_agg": {
+              "aggregations": {
+                "c403": {
+                  "filter": {
+                    "term": {
+                      "http.response.status_code": 403
+                    }
+                  }
+                },
+                "c404": {
+                  "filter": {
+                    "term": {
+                      "http.response.status_code": 404
+                    }
+                  }
+                },
+                "c_xtenant": {
+                  "filter": {
+                    "term": {
+                      "appsec.authz.cross_tenant": true
+                    }
+                  }
+                },
+                "distinct_ids": {
+                  "cardinality": {
+                    "field": "appsec.resource_id",
+                    "precision_threshold": 3000
+                  }
+                }
+              },
+              "composite": {
+                "size": 1000,
+                "sources": [
+                  {
+                    "user": {
+                      "terms": {
+                        "field": "user.id"
+                      }
+                    }
+                  },
+                  {
+                    "endpoint": {
+                      "terms": {
+                        "field": "appsec.endpoint_template"
+                      }
+                    }
+                  },
+                  {
+                    "window": {
+                      "date_histogram": {
+                        "field": "@timestamp",
+                        "fixed_interval": "10m",
+                        "offset": "0m"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "query": {
+            "bool": {
+              "filter": [
+                {
+                  "term": {
+                    "event.dataset": "appsec.api"
+                  }
+                },
+                {
+                  "range": {
+                    "@timestamp": {
+                      "gte": "now-20m"
+                    }
+                  }
+                }
+              ],
+              "must_not": [
+                {
+                  "terms": {
+                    "user.roles": [
+                      "batch_worker"
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "size": 0
+        }
+      }
+    }
+  ],
+  "monitor_type": "bucket_level_monitor",
+  "name": "bola_enumeration",
+  "schedule": {
+    "period": {
+      "interval": 1,
+      "unit": "MINUTES"
+    }
+  },
+  "triggers": [
+    {
+      "bucket_level_trigger": {
+        "actions": [],
+        "condition": {
+          "buckets_path": {
+            "c403": "c403._count",
+            "c404": "c404._count",
+            "c_xtenant": "c_xtenant._count",
+            "distinct_ids": "distinct_ids.value",
+            "total": "_count"
+          },
+          "parent_bucket_path": "composite_agg",
+          "script": {
+            "lang": "painless",
+            "source": "params.distinct_ids > 25 && params.distinct_ids > 3 && params.total > 0 && ((double) (params.c403 + params.c404 + params.c_xtenant)) / params.total > 0.6"
+          }
+        },
+        "name": "bola-enumeration",
+        "severity": "2"
+      }
+    }
+  ],
+  "type": "monitor"
+}

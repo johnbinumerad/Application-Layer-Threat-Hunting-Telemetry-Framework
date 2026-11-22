@@ -1,0 +1,104 @@
+{
+  "enabled": true,
+  "inputs": [
+    {
+      "search": {
+        "indices": [
+          "appsec-telemetry-*"
+        ],
+        "query": {
+          "query": {
+            "bool": {
+              "filter": [
+                {
+                  "term": {
+                    "event.dataset": "appsec.egress"
+                  }
+                },
+                {
+                  "range": {
+                    "@timestamp": {
+                      "gte": "now-5m"
+                    }
+                  }
+                },
+                {
+                  "bool": {
+                    "minimum_should_match": 1,
+                    "should": [
+                      {
+                        "term": {
+                          "destination.ip": "10.0.0.0/8"
+                        }
+                      },
+                      {
+                        "term": {
+                          "destination.ip": "172.16.0.0/12"
+                        }
+                      },
+                      {
+                        "term": {
+                          "destination.ip": "192.168.0.0/16"
+                        }
+                      },
+                      {
+                        "term": {
+                          "destination.ip": "169.254.0.0/16"
+                        }
+                      },
+                      {
+                        "term": {
+                          "destination.ip": "127.0.0.0/8"
+                        }
+                      },
+                      {
+                        "terms": {
+                          "destination.domain": [
+                            "localhost",
+                            "metadata.internal",
+                            "metadata.google.internal",
+                            "target-api",
+                            "gateway",
+                            "opensearch",
+                            "dashboards",
+                            "otel-collector",
+                            "jupyter"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "size": 10
+        }
+      }
+    }
+  ],
+  "monitor_type": "query_level_monitor",
+  "name": "ssrf_egress",
+  "schedule": {
+    "period": {
+      "interval": 1,
+      "unit": "MINUTES"
+    }
+  },
+  "triggers": [
+    {
+      "query_level_trigger": {
+        "actions": [],
+        "condition": {
+          "script": {
+            "lang": "painless",
+            "source": "ctx.results[0].hits.total.value > 0"
+          }
+        },
+        "name": "ssrf-internal-egress",
+        "severity": "2"
+      }
+    }
+  ],
+  "type": "monitor"
+}

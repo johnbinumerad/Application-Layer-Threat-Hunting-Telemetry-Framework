@@ -1,0 +1,278 @@
+{
+  "_meta": {
+    "generated_by": "tools/gen_index_assets.py",
+    "name": "appsec-telemetry"
+  },
+  "index_patterns": [
+    "appsec-telemetry-*"
+  ],
+  "priority": 100,
+  "template": {
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "@timestamp": {
+          "format": "strict_date_optional_time||epoch_millis",
+          "type": "date"
+        },
+        "appsec": {
+          "properties": {
+            "authz": {
+              "properties": {
+                "cross_tenant": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "client_pair": {
+              "type": "keyword"
+            },
+            "egress": {
+              "properties": {
+                "count": {
+                  "type": "long"
+                }
+              }
+            },
+            "endpoint_template": {
+              "type": "keyword"
+            },
+            "gateway": {
+              "properties": {
+                "response_flags": {
+                  "type": "keyword"
+                },
+                "route": {
+                  "type": "keyword"
+                },
+                "upstream_cluster": {
+                  "type": "keyword"
+                }
+              }
+            },
+            "jwt": {
+              "properties": {
+                "alg": {
+                  "type": "keyword"
+                },
+                "exp": {
+                  "format": "strict_date_optional_time||epoch_millis",
+                  "type": "date"
+                },
+                "expired": {
+                  "type": "boolean"
+                },
+                "jti": {
+                  "type": "keyword"
+                },
+                "jti_hash": {
+                  "type": "keyword"
+                },
+                "token_hash": {
+                  "type": "keyword"
+                },
+                "verified": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "latency_ms": {
+              "type": "long"
+            },
+            "resource": {
+              "properties": {
+                "tenant_id": {
+                  "type": "keyword"
+                }
+              }
+            },
+            "resource_id": {
+              "type": "keyword"
+            },
+            "scrub": {
+              "properties": {
+                "status": {
+                  "type": "keyword"
+                }
+              }
+            },
+            "upstream_latency_ms": {
+              "type": "long"
+            }
+          }
+        },
+        "destination": {
+          "properties": {
+            "address": {
+              "type": "keyword"
+            },
+            "domain": {
+              "type": "keyword"
+            },
+            "ip": {
+              "type": "ip"
+            },
+            "port": {
+              "type": "long"
+            }
+          }
+        },
+        "error": {
+          "properties": {
+            "type": {
+              "type": "keyword"
+            }
+          }
+        },
+        "event": {
+          "properties": {
+            "action": {
+              "type": "keyword"
+            },
+            "category": {
+              "type": "keyword"
+            },
+            "dataset": {
+              "type": "keyword"
+            },
+            "duration": {
+              "type": "long"
+            },
+            "id": {
+              "type": "keyword"
+            },
+            "kind": {
+              "type": "keyword"
+            },
+            "outcome": {
+              "type": "keyword"
+            },
+            "start": {
+              "format": "strict_date_optional_time||epoch_millis",
+              "type": "date"
+            }
+          }
+        },
+        "http": {
+          "properties": {
+            "request": {
+              "properties": {
+                "method": {
+                  "type": "keyword"
+                }
+              }
+            },
+            "response": {
+              "properties": {
+                "status_code": {
+                  "type": "long"
+                }
+              }
+            }
+          }
+        },
+        "lab": {
+          "properties": {
+            "ground_truth": {
+              "properties": {
+                "label": {
+                  "type": "keyword"
+                },
+                "role": {
+                  "type": "keyword"
+                },
+                "run_id": {
+                  "type": "keyword"
+                },
+                "scenario": {
+                  "type": "keyword"
+                },
+                "technique": {
+                  "type": "keyword"
+                }
+              }
+            }
+          }
+        },
+        "organization": {
+          "properties": {
+            "id": {
+              "type": "keyword"
+            }
+          }
+        },
+        "source": {
+          "properties": {
+            "as": {
+              "properties": {
+                "number": {
+                  "type": "long"
+                },
+                "organization": {
+                  "properties": {
+                    "name": {
+                      "type": "keyword"
+                    }
+                  }
+                }
+              }
+            },
+            "geo": {
+              "properties": {
+                "country_iso_code": {
+                  "type": "keyword"
+                }
+              }
+            },
+            "ip": {
+              "type": "ip"
+            }
+          }
+        },
+        "trace": {
+          "properties": {
+            "id": {
+              "type": "keyword"
+            }
+          }
+        },
+        "url": {
+          "properties": {
+            "full": {
+              "type": "keyword"
+            },
+            "path": {
+              "fielddata": false,
+              "type": "text"
+            }
+          }
+        },
+        "user": {
+          "properties": {
+            "id": {
+              "type": "keyword"
+            },
+            "roles": {
+              "type": "keyword"
+            }
+          }
+        },
+        "user_agent": {
+          "properties": {
+            "original": {
+              "type": "keyword"
+            }
+          }
+        }
+      }
+    },
+    "settings": {
+      "index": {
+        "default_pipeline": "appsec-enrich",
+        "number_of_replicas": 0,
+        "number_of_shards": 1,
+        "refresh_interval": "1s"
+      }
+    }
+  }
+}

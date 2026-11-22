@@ -1,0 +1,12 @@
+.env
+.lab/
+reports/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.hypothesis/
+.venv/
+venv/
+*.egg-info/
+.ipynb_checkpoints/
+.DS_Store

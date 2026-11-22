@@ -1,0 +1,19 @@
+# Lab-wide settings shared by labctl, simulators, and tests.
+
+[gateway]
+bind_host = "127.0.0.1"
+port = 8080
+scheme = "http"
+
+[run]
+seed = 1337
+
+[limits]
+duration_min_s = 1
+duration_max_s = 86400
+rate_min = 1
+rate_max = 1000
+jwt_count_min = 1
+jwt_count_max = 1000
+jwt_hijack_count_min = 2
+jwt_hijack_count_max = 1000

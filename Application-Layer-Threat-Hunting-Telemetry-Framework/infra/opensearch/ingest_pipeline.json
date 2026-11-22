@@ -1,0 +1,45 @@
+{
+  "description": "Lab IP to ASN/geo enrichment (generated from config/ip_enrichment.yaml)",
+  "processors": [
+    {
+      "dot_expander": {
+        "field": "source.ip",
+        "ignore_failure": true
+      }
+    },
+    {
+      "script": {
+        "lang": "painless",
+        "params": {
+          "table": [
+            {
+              "asn": 64496,
+              "country": "US",
+              "end": 3221226239,
+              "org": "LabNet-Corp",
+              "prefix": 24,
+              "start": 3221225984
+            },
+            {
+              "asn": 64497,
+              "country": "DE",
+              "end": 3325256959,
+              "org": "LabNet-Cloud",
+              "prefix": 24,
+              "start": 3325256704
+            },
+            {
+              "asn": 64498,
+              "country": "BR",
+              "end": 3405804031,
+              "org": "LabNet-Resi",
+              "prefix": 24,
+              "start": 3405803776
+            }
+          ]
+        },
+        "source": "def ip = ctx['source']?.get('ip');\nif (ip == null) { return; }\nString[] p = /\\./.split(ip);\nif (p.length != 4) { return; }\nlong n = 0;\nfor (int i = 0; i < 4; i++) {\n  int o;\n  try { o = Integer.parseInt(p[i]); } catch (Exception e) { return; }\n  if (o < 0 || o > 255) { return; }\n  n = n * 256 + o;\n}\nfor (def row : params.table) {\n  if (n >= row.start && n <= row.end) {\n    ctx['source'].putIfAbsent('as', new HashMap());\n    ctx['source']['as']['number'] = row.asn;\n    ctx['source']['as'].putIfAbsent('organization', new HashMap());\n    ctx['source']['as']['organization']['name'] = row.org;\n    ctx['source'].putIfAbsent('geo', new HashMap());\n    ctx['source']['geo']['country_iso_code'] = row.country;\n    return;\n  }\n}"
+      }
+    }
+  ]
+}

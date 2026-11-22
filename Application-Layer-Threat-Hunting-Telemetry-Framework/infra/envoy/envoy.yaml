@@ -1,0 +1,183 @@
+# Envoy API gateway for the Application-Layer Threat Hunting lab.
+#
+# - Listener :8080 routes /api/* to cluster target_api (target-api:8000).
+# - x-request-id is generated when absent and PRESERVED when supplied, so client
+#   retries keep the same Trace_ID (Req 5.2). It is echoed in the response.
+# - Client IP comes from X-Forwarded-For with xff_num_trusted_hops: 0 (rightmost
+#   entry), which is how simulators fake distinct source IPs / ASNs. The
+#   resulting downstream address is written to x-lab-client-ip; any
+#   client-supplied x-lab-client-ip is stripped first.
+# - local_ratelimit: 600/60s on /api/v1/invoices/, 60/60s on /api/v1/auth/login
+#   (the "standard rate limits" that low-and-slow BOLA stays beneath, Req 6.2).
+# - Access logs are shipped via the OpenTelemetry access logger (gRPC) to
+#   otel-collector:4317 with event.dataset=appsec.gateway.
+# - Admin interface on 9901 is internal only (never published by Compose).
+
+admin:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 9901
+
+static_resources:
+  listeners:
+    - name: ingress_8080
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 8080
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_http
+                codec_type: AUTO
+                generate_request_id: true
+                preserve_external_request_id: true
+                always_set_request_id_in_response: true
+                # Client IP detection: XFF, no trusted hops (lab simulates source IPs).
+                original_ip_detection_extensions:
+                  - name: envoy.http.original_ip_detection.xff
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.http.original_ip_detection.xff.v3.XffConfig
+                      xff_num_trusted_hops: 0
+                access_log:
+                  - name: envoy.access_loggers.open_telemetry
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.open_telemetry.v3.OpenTelemetryAccessLogConfig
+                      common_config:
+                        log_name: appsec_gateway
+                        transport_api_version: V3
+                        grpc_service:
+                          envoy_grpc:
+                            cluster_name: otel_collector
+                      resource_attributes:
+                        values:
+                          - key: service.name
+                            value: { string_value: gateway }
+                      body:
+                        string_value: ""
+                      attributes:
+                        values:
+                          - key: event.dataset
+                            value: { string_value: appsec.gateway }
+                          - key: trace.id
+                            value: { string_value: "%REQ(X-REQUEST-ID)%" }
+                          - key: source.ip
+                            value: { string_value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%" }
+                          - key: user_agent.original
+                            value: { string_value: "%REQ(USER-AGENT)%" }
+                          - key: http.request.method
+                            value: { string_value: "%REQ(:METHOD)%" }
+                          - key: url.path
+                            value: { string_value: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%" }
+                          - key: http.response.status_code
+                            value: { string_value: "%RESPONSE_CODE%" }
+                          # Total request duration in milliseconds (Envoy %DURATION%).
+                          - key: appsec.gateway.duration_ms
+                            value: { string_value: "%DURATION%" }
+                          # Upstream service time in milliseconds (x-envoy-upstream-service-time).
+                          - key: appsec.upstream_latency_ms
+                            value: { string_value: "%RESP(X-ENVOY-UPSTREAM-SERVICE-TIME)%" }
+                          - key: appsec.gateway.route
+                            value: { string_value: "%ROUTE_NAME%" }
+                          - key: appsec.gateway.upstream_cluster
+                            value: { string_value: "%UPSTREAM_CLUSTER%" }
+                          - key: appsec.gateway.response_flags
+                            value: { string_value: "%RESPONSE_FLAGS%" }
+                http_filters:
+                  - name: envoy.filters.http.local_ratelimit
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+                      # Listener-level default: no limiting; per-route buckets below apply.
+                      stat_prefix: http_local_rate_limiter
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: local_route
+                  virtual_hosts:
+                    - name: lab_api
+                      domains: ["*"]
+                      # Never trust a client-supplied value; re-set from downstream address.
+                      request_headers_to_remove:
+                        - x-lab-client-ip
+                      request_headers_to_add:
+                        - header:
+                            key: x-lab-client-ip
+                            value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"
+                          append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                      routes:
+                        - name: invoices
+                          match: { prefix: "/api/v1/invoices/" }
+                          route: { cluster: target_api, timeout: 15s }
+                          typed_per_filter_config:
+                            envoy.filters.http.local_ratelimit:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+                              stat_prefix: invoices_rate_limiter
+                              token_bucket:
+                                max_tokens: 600
+                                tokens_per_fill: 600
+                                fill_interval: 60s
+                              filter_enabled:
+                                runtime_key: invoices_rl_enabled
+                                default_value: { numerator: 100, denominator: HUNDRED }
+                              filter_enforced:
+                                runtime_key: invoices_rl_enforced
+                                default_value: { numerator: 100, denominator: HUNDRED }
+                        - name: auth_login
+                          match: { path: "/api/v1/auth/login" }
+                          route: { cluster: target_api, timeout: 15s }
+                          typed_per_filter_config:
+                            envoy.filters.http.local_ratelimit:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+                              stat_prefix: login_rate_limiter
+                              token_bucket:
+                                max_tokens: 60
+                                tokens_per_fill: 60
+                                fill_interval: 60s
+                              filter_enabled:
+                                runtime_key: login_rl_enabled
+                                default_value: { numerator: 100, denominator: HUNDRED }
+                              filter_enforced:
+                                runtime_key: login_rl_enforced
+                                default_value: { numerator: 100, denominator: HUNDRED }
+                        - name: api_default
+                          match: { prefix: "/api/" }
+                          route: { cluster: target_api, timeout: 15s }
+
+  clusters:
+    - name: target_api
+      type: STRICT_DNS
+      connect_timeout: 3s
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: target_api
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: target-api
+                      port_value: 8000
+
+    # OTLP gRPC access-log sink (internal network only).
+    - name: otel_collector
+      type: STRICT_DNS
+      connect_timeout: 3s
+      lb_policy: ROUND_ROBIN
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: otel_collector
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: otel-collector
+                      port_value: 4317

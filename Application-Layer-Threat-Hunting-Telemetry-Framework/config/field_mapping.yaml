@@ -1,0 +1,79 @@
+# Source of truth for the telemetry field mapping (ECS 8.x + appsec.* + lab.*).
+# type:     keyword | text | date | long | boolean | ip
+# presence: required (R, on every event of the dataset) | conditional (C, omitted when unavailable)
+# datasets: which event datasets carry the field
+# Generated artifacts (index template, docs/field-mapping.md) derive from this file.
+version: 1
+naming_scheme: ECS-8.x
+datasets: [appsec.api, appsec.egress, appsec.gateway]
+
+fields:
+  # ---- Common ----
+  "@timestamp":            {type: date,    presence: required,    datasets: [appsec.api, appsec.egress, appsec.gateway], note: "UTC ISO 8601 ms, equals event.start"}
+  event.id:                {type: keyword, presence: required,    datasets: [appsec.api, appsec.egress, appsec.gateway]}
+  event.dataset:           {type: keyword, presence: required,    datasets: [appsec.api, appsec.egress, appsec.gateway]}
+  event.kind:              {type: keyword, presence: required,    datasets: [appsec.api, appsec.egress, appsec.gateway], note: "always 'event'"}
+  event.start:             {type: date,    presence: required,    datasets: [appsec.api, appsec.egress, appsec.gateway]}
+  event.duration:          {type: long,    presence: required,    datasets: [appsec.api, appsec.egress, appsec.gateway], note: "nanoseconds"}
+  appsec.latency_ms:       {type: long,    presence: required,    datasets: [appsec.api, appsec.egress, appsec.gateway], note: "non-negative integer ms"}
+  trace.id:                {type: keyword, presence: required,    datasets: [appsec.api, appsec.egress, appsec.gateway]}
+  source.ip:               {type: ip,      presence: required,    datasets: [appsec.api, appsec.egress, appsec.gateway]}
+  user_agent.original:     {type: keyword, presence: conditional, datasets: [appsec.api, appsec.gateway], note: "truncated to 512 chars"}
+
+  # ---- api event ----
+  event.category:          {type: keyword, presence: required,    datasets: [appsec.api]}
+  event.action:            {type: keyword, presence: required,    datasets: [appsec.api]}
+  event.outcome:           {type: keyword, presence: required,    datasets: [appsec.api, appsec.egress]}
+  user.id:                 {type: keyword, presence: conditional, datasets: [appsec.api, appsec.egress]}
+  user.roles:              {type: keyword, presence: conditional, datasets: [appsec.api]}
+  organization.id:         {type: keyword, presence: conditional, datasets: [appsec.api, appsec.egress]}
+  http.request.method:     {type: keyword, presence: required,    datasets: [appsec.api, appsec.gateway]}
+  http.response.status_code: {type: long,  presence: required,    datasets: [appsec.api, appsec.gateway], note: "conditional (omitted on failure) for appsec.egress"}
+  url.path:                {type: text,    presence: required,    datasets: [appsec.api, appsec.gateway], note: "not aggregatable"}
+  appsec.endpoint_template: {type: keyword, presence: required,   datasets: [appsec.api], note: "conditional on appsec.egress (inbound context)"}
+  appsec.resource_id:      {type: keyword, presence: conditional, datasets: [appsec.api]}
+  appsec.jwt.jti:          {type: keyword, presence: conditional, datasets: [appsec.api]}
+  appsec.jwt.jti_hash:     {type: keyword, presence: conditional, datasets: [appsec.api]}
+  appsec.jwt.alg:          {type: keyword, presence: conditional, datasets: [appsec.api]}
+  appsec.jwt.exp:          {type: date,    presence: conditional, datasets: [appsec.api]}
+  appsec.jwt.expired:      {type: boolean, presence: conditional, datasets: [appsec.api]}
+  appsec.jwt.verified:     {type: boolean, presence: conditional, datasets: [appsec.api]}
+  appsec.jwt.token_hash:   {type: keyword, presence: conditional, datasets: [appsec.api], note: "collector-derived"}
+  appsec.client_pair:      {type: keyword, presence: conditional, datasets: [appsec.api], note: "collector-derived"}
+  appsec.resource.tenant_id: {type: keyword, presence: conditional, datasets: [appsec.api]}
+  appsec.authz.cross_tenant: {type: boolean, presence: conditional, datasets: [appsec.api]}
+  appsec.egress.count:     {type: long,    presence: required,    datasets: [appsec.api]}
+
+  # ---- egress event ----
+  destination.address:     {type: keyword, presence: required,    datasets: [appsec.egress]}
+  destination.domain:      {type: keyword, presence: conditional, datasets: [appsec.egress]}
+  destination.port:        {type: long,    presence: conditional, datasets: [appsec.egress]}
+  destination.ip:          {type: ip,      presence: conditional, datasets: [appsec.egress], note: "omitted on DNS failure"}
+  url.full:                {type: keyword, presence: required,    datasets: [appsec.egress], note: "scrubbed by the pipeline"}
+  error.type:              {type: keyword, presence: conditional, datasets: [appsec.egress], note: "dns_failure|connection_refused|timeout|invalid_url|other"}
+
+  # ---- gateway event ----
+  appsec.upstream_latency_ms:      {type: long,    presence: conditional, datasets: [appsec.gateway]}
+  appsec.gateway.route:            {type: keyword, presence: conditional, datasets: [appsec.gateway]}
+  appsec.gateway.upstream_cluster: {type: keyword, presence: conditional, datasets: [appsec.gateway]}
+  appsec.gateway.response_flags:   {type: keyword, presence: conditional, datasets: [appsec.gateway]}
+
+  # ---- ground truth (never referenced by detections) ----
+  lab.ground_truth.label:     {type: keyword, presence: conditional, datasets: [appsec.api, appsec.egress, appsec.gateway], values: [baseline, attack]}
+  lab.ground_truth.scenario:  {type: keyword, presence: conditional, datasets: [appsec.api, appsec.egress, appsec.gateway], values: [baseline, bola, jwt, ssrf]}
+  lab.ground_truth.technique: {type: keyword, presence: conditional, datasets: [appsec.api, appsec.egress, appsec.gateway]}
+  lab.ground_truth.run_id:    {type: keyword, presence: conditional, datasets: [appsec.api, appsec.egress, appsec.gateway]}
+  lab.ground_truth.role:      {type: keyword, presence: conditional, datasets: [appsec.api, appsec.egress, appsec.gateway], values: [attack_action, setup]}
+
+  # ---- enrichment (SIEM ingest pipeline) ----
+  source.as.number:            {type: long,    presence: conditional, datasets: [appsec.api, appsec.egress, appsec.gateway], stage: enrichment}
+  source.as.organization.name: {type: keyword, presence: conditional, datasets: [appsec.api, appsec.egress, appsec.gateway], stage: enrichment}
+  source.geo.country_iso_code: {type: keyword, presence: conditional, datasets: [appsec.api, appsec.egress, appsec.gateway], stage: enrichment}
+
+  # ---- pipeline-internal ----
+  appsec.scrub.status:     {type: keyword, presence: required,    datasets: [appsec.api, appsec.egress, appsec.gateway], stage: pipeline, note: "always 'ok' for indexed records"}
+
+# Sent by the app to the Collector, removed before indexing; never in the SIEM.
+removed_before_indexing:
+  - http.request.headers.authorization
+  - appsec.credentials.password

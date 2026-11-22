@@ -1,0 +1,138 @@
+{
+  "enabled": true,
+  "inputs": [
+    {
+      "search": {
+        "indices": [
+          "appsec-telemetry-*"
+        ],
+        "query": {
+          "aggregations": {
+            "expired_accepted": {
+              "filter": {
+                "bool": {
+                  "filter": [
+                    {
+                      "term": {
+                        "appsec.jwt.expired": true
+                      }
+                    },
+                    {
+                      "range": {
+                        "http.response.status_code": {
+                          "gte": 200,
+                          "lt": 300
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "forged_or_failed": {
+              "filter": {
+                "bool": {
+                  "minimum_should_match": 1,
+                  "should": [
+                    {
+                      "term": {
+                        "appsec.jwt.alg": "none"
+                      }
+                    },
+                    {
+                      "term": {
+                        "event.action": "jwt_validation_failed"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "jti_reuse": {
+              "aggregations": {
+                "client_pairs": {
+                  "cardinality": {
+                    "field": "appsec.client_pair"
+                  }
+                }
+              },
+              "terms": {
+                "field": "appsec.jwt.jti",
+                "size": 1000
+              }
+            }
+          },
+          "query": {
+            "bool": {
+              "filter": [
+                {
+                  "term": {
+                    "event.dataset": "appsec.api"
+                  }
+                },
+                {
+                  "range": {
+                    "@timestamp": {
+                      "gte": "now-5m"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "size": 0
+        }
+      }
+    }
+  ],
+  "monitor_type": "query_level_monitor",
+  "name": "jwt_abuse",
+  "schedule": {
+    "period": {
+      "interval": 1,
+      "unit": "MINUTES"
+    }
+  },
+  "triggers": [
+    {
+      "query_level_trigger": {
+        "actions": [],
+        "condition": {
+          "script": {
+            "lang": "painless",
+            "source": "ctx.results[0].aggregations.forged_or_failed.doc_count > 0"
+          }
+        },
+        "name": "jwt-alg-none-or-validation-failed",
+        "severity": "2"
+      }
+    },
+    {
+      "query_level_trigger": {
+        "actions": [],
+        "condition": {
+          "script": {
+            "lang": "painless",
+            "source": "ctx.results[0].aggregations.expired_accepted.doc_count > 0"
+          }
+        },
+        "name": "jwt-expired-accepted",
+        "severity": "2"
+      }
+    },
+    {
+      "query_level_trigger": {
+        "actions": [],
+        "condition": {
+          "script": {
+            "lang": "painless",
+            "source": "def b = ctx.results[0].aggregations.jti_reuse.buckets; for (def x : b) { if (x.client_pairs.value >= 2) { return true; } } return false;"
+          }
+        },
+        "name": "jwt-jti-multi-client",
+        "severity": "2"
+      }
+    }
+  ],
+  "type": "monitor"
+}

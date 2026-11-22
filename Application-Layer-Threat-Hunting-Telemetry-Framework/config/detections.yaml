@@ -1,0 +1,32 @@
+# Single source of truth for detection thresholds (monitors and Sigma are generated/validated from this).
+bola:
+  window_minutes: 10
+  lookback_minutes: 20
+  distinct_ids_threshold: 25      # distinct resource ids > 25
+  error_ratio_threshold: 0.6      # (403 + 404 + cross-tenant 2xx) / total > 0.6
+  retry_suppression_max_ids: 3    # <= 3 distinct ids is mobile-retry noise
+  excluded_roles:
+    - batch_worker
+
+jwt:
+  hijack_window_minutes: 5
+  min_distinct_client_pairs: 2    # same jti seen from > 1 (source.ip, user_agent) pair
+
+ssrf:
+  internal_cidrs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 169.254.0.0/16
+    - 127.0.0.0/8
+  internal_hostnames:
+    - localhost
+    - metadata.internal
+    - metadata.google.internal
+    - target-api
+    - gateway
+    - opensearch
+    - dashboards
+    - otel-collector
+    - jupyter
+  allowed_destination_hosts: []

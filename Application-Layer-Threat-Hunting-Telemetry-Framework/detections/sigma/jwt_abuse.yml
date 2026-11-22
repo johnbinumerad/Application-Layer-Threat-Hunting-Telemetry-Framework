@@ -1,0 +1,99 @@
+title: JWT Abuse - alg=none or Expired Token Accepted
+id: a4d9c6e1-5b78-4a23-b0f4-1e8c7d3a9b11
+name: jwt_unverified_or_expired_accepted
+status: experimental
+description: >
+  API requests carrying a JWT with alg=none, or an expired JWT, that the API
+  answered with a 2xx status (i.e. the token was accepted).
+references:
+  - https://owasp.org/API-Security/editions/2023/en/0xa2-broken-authentication/
+author: Application-Layer Threat Hunting Framework
+date: 2025-01-01
+tags:
+  - attack.defense-evasion
+  - attack.persistence
+  - attack.t1550.001
+  - attack.t1078
+  - owasp.api2
+logsource:
+  category: application
+  product: appsec-lab
+  service: target_api
+detection:
+  selection_api:
+    event.dataset: appsec.api
+  accepted:
+    http.response.status_code|gte: 200
+    http.response.status_code|lt: 300
+  bad_token:
+    - appsec.jwt.alg: none
+    - appsec.jwt.expired: true
+  condition: selection_api and accepted and bad_token
+falsepositives:
+  - Clock skew between token issuer and API near the expiry boundary
+  - Test clients deliberately using unsigned tokens in non-lab environments
+level: high
+---
+title: JWT Abuse - Token ID Used from Multiple Client Pairs
+id: c5e1b7a3-2d94-4c06-a8f2-6b3d9e0f4c12
+name: jwt_jti_events
+status: experimental
+description: >
+  Helper rule selecting API requests that carry a JWT ID hash and a derived
+  client pair (source.ip, user agent). Used by the hijack correlation below.
+author: Application-Layer Threat Hunting Framework
+date: 2025-01-01
+tags:
+  - attack.t1550.001
+  - attack.t1078
+  - owasp.api2
+logsource:
+  category: application
+  product: appsec-lab
+  service: target_api
+detection:
+  selection:
+    event.dataset: appsec.api
+  has_jti:
+    appsec.jwt.jti_hash|exists: true
+    appsec.client_pair|exists: true
+  condition: selection and has_jti
+falsepositives:
+  - A user roaming between networks or devices with a long-lived token
+level: informational
+---
+title: JWT Abuse - Same JTI Hijack from Different Client Pairs
+id: e8f2a4c6-9b10-4d35-b7e1-3a5c8d0f6b13
+status: experimental
+description: >
+  The same JWT ID (appsec.jwt.jti_hash) seen from two or more distinct
+  (source.ip, user agent) client pairs within 5 minutes, indicating token
+  theft and replay. Mirrors jwt.min_distinct_client_pairs and
+  jwt.hijack_window_minutes in config/detections.yaml.
+references:
+  - https://owasp.org/API-Security/editions/2023/en/0xa2-broken-authentication/
+author: Application-Layer Threat Hunting Framework
+date: 2025-01-01
+tags:
+  - attack.defense-evasion
+  - attack.persistence
+  - attack.t1550.001
+  - attack.t1078
+  - owasp.api2
+logsource:
+  category: application
+  product: appsec-lab
+  service: target_api
+correlation:
+  type: value_count
+  rules:
+    - jwt_jti_events
+  group-by:
+    - appsec.jwt.jti_hash
+  timespan: 5m
+  condition:
+    gte: 2
+    field: appsec.client_pair
+falsepositives:
+  - Users switching between Wi-Fi and cellular networks mid-session with the same token
+level: high

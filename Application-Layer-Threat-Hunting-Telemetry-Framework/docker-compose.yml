@@ -1,0 +1,189 @@
+# Application-Layer Threat Hunting & Telemetry Framework - Purple Team lab.
+# Every published port binds 127.0.0.1 only (Req 9.5). `labctl up` additionally
+# runs a preflight; plain `docker compose up -d` also works (Req 1.1-1.5).
+#
+# Networks (design D13): Docker cannot publish ports from an `internal: true`
+# network, so lab_internal holds every container and lab_edge is joined only by
+# the services that must publish a loopback port. target-api and otel-collector
+# are never on lab_edge, so they have no route to the internet (Req 9.4).
+
+name: appsec-lab
+
+networks:
+  lab_internal:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+  lab_edge:
+    driver: bridge
+
+volumes:
+  opensearch-data:
+
+services:
+  gateway:
+    image: envoyproxy/envoy:v1.31.2
+    command: ["-c", "/etc/envoy/envoy.yaml", "--service-cluster", "lab-gateway"]
+    volumes:
+      - ./infra/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - lab_internal
+      - lab_edge
+    healthcheck:
+      # The Envoy image has no curl; use bash's /dev/tcp against the admin /ready endpoint.
+      test:
+        - CMD-SHELL
+        - "exec 3<>/dev/tcp/127.0.0.1/9901 && printf 'GET /ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q LIVE <&3"
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  target-api:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    environment:
+      LAB_JWT_SECRET: ${LAB_JWT_SECRET:-lab-only-jwt-secret-change-me}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    # Needed to add 169.254.169.254 to the container loopback for the simulated
+    # metadata service and to bind port 80 (design B, metadata simulator).
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    networks:
+      lab_internal:
+        aliases:
+          - meta.lab.internal
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3).status == 200 else 1)"
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  otel-collector:
+    build:
+      context: infra/otel
+    environment:
+      # An explicitly empty value activates the refusal path (Req 4.7).
+      SCRUB_SALT: ${SCRUB_SALT-lab-only-change-me-salt}
+      OPENSEARCH_ENDPOINT: http://opensearch:9200
+    networks:
+      - lab_internal
+    healthcheck:
+      # Static busybox is added by infra/otel/Dockerfile (task 2.3).
+      # health_check reports unhealthy in degraded no-salt mode.
+      test: ["CMD", "/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:13133/"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  opensearch:
+    image: opensearchproject/opensearch:2.17.1
+    environment:
+      cluster.name: lab-siem
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      bootstrap.memory_lock: "false"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    ports:
+      - "127.0.0.1:9200:9200"
+    networks:
+      - lab_internal
+      - lab_edge
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf 'http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow&timeout=3s' >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  dashboards:
+    image: opensearchproject/opensearch-dashboards:2.17.1
+    environment:
+      OPENSEARCH_HOSTS: '["http://opensearch:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5601:5601"
+    networks:
+      - lab_internal
+      - lab_edge
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:5601/api/status >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+    restart: unless-stopped
+
+  jupyter:
+    build:
+      context: .
+      dockerfile: notebooks/Dockerfile
+    environment:
+      SCRUB_SALT: ${SCRUB_SALT-lab-only-change-me-salt}
+      LAB_JWT_SECRET: ${LAB_JWT_SECRET:-lab-only-jwt-secret-change-me}
+      OPENSEARCH_HOST: opensearch
+      OPENSEARCH_PORT: "9200"
+      # Security plugin is disabled, so credentials are empty (Req 12.6).
+      OPENSEARCH_USER: ""
+      OPENSEARCH_PASSWORD: ""
+    ports:
+      - "127.0.0.1:8888:8888"
+    networks:
+      - lab_internal
+      - lab_edge
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8888/api', timeout=3).status == 200 else 1)"
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  # One-shot setup job: installs ingest pipeline, index template, dashboards, monitors.
+  lab-setup:
+    build:
+      context: .
+      dockerfile: tools/labctl/Dockerfile
+    environment:
+      OPENSEARCH_HOST: opensearch
+      OPENSEARCH_PORT: "9200"
+      DASHBOARDS_HOST: dashboards
+      DASHBOARDS_PORT: "5601"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+      dashboards:
+        condition: service_healthy
+    networks:
+      - lab_internal
+    restart: "no"

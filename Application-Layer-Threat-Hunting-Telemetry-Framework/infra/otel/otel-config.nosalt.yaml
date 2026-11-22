@@ -1,0 +1,39 @@
+# Degraded mode: SCRUB_SALT is not configured. Receivers and an unhealthy
+# health_check only. There is NO OpenSearch exporter, so nothing reaches the SIEM.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+    # Report unhealthy so Compose marks the service unhealthy.
+    check_collector_pipeline:
+      enabled: true
+      interval: 5s
+      exporter_failure_threshold: 1
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Sink for received data; records are discarded without export.
+  filter/drop_all:
+    error_mode: ignore
+    logs:
+      log_record:
+        - "true"
+
+exporters:
+  # Exports to nowhere; the exporter always fails so the health_check turns unhealthy.
+  nop: {}
+
+service:
+  extensions: [health_check]
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [filter/drop_all]
+      exporters: [nop]

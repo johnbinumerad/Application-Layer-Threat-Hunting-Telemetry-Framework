@@ -1,0 +1,77 @@
+title: BOLA Object-ID Enumeration - Failed or Cross-Tenant Object Requests
+id: 3f1c8a52-6d0e-4b7a-9c41-2a5e7b8d1f01
+name: bola_enumeration_events
+status: experimental
+description: >
+  Invoice requests that were denied (403/404) or that succeeded across tenants
+  (appsec.authz.cross_tenant). Building block for the correlation rule below.
+  Retry noise from the batch_worker role is excluded. Thresholds mirror
+  config/detections.yaml (bola.*).
+references:
+  - https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/
+author: Application-Layer Threat Hunting Framework
+date: 2025-01-01
+tags:
+  - attack.collection
+  - attack.discovery
+  - attack.t1087
+  - attack.t1213
+  - owasp.api1
+logsource:
+  category: application
+  product: appsec-lab
+  service: target_api
+detection:
+  selection:
+    event.dataset: appsec.api
+    appsec.endpoint_template: /api/v1/invoices/{invoice_id}
+  failed_or_cross_tenant:
+    - http.response.status_code:
+        - 403
+        - 404
+    - appsec.authz.cross_tenant: true
+  filter_batch_worker:
+    user.roles: batch_worker
+  condition: selection and failed_or_cross_tenant and not filter_batch_worker
+falsepositives:
+  - Mobile client retries on a handful of objects (suppressed by the correlation threshold of more than 3 ids)
+  - Legitimate support staff browsing many customer invoices
+level: low
+---
+title: BOLA Object-ID Enumeration - Distinct Resource IDs per User
+id: 7b2e4d90-1c3a-4f68-8e5b-9d0a6c2f3e02
+status: experimental
+description: >
+  More than 25 distinct appsec.resource_id values requested by one user within
+  a 10-minute window, where the requests were denied or crossed tenants. The
+  error-ratio condition (0.6 over (403 + 404 + cross-tenant 2xx) / total) cannot
+  be expressed in Sigma and is enforced by the OpenSearch monitor; this rule
+  covers the distinct-ID threshold over the already filtered failing events.
+references:
+  - https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/
+author: Application-Layer Threat Hunting Framework
+date: 2025-01-01
+tags:
+  - attack.collection
+  - attack.discovery
+  - attack.t1087
+  - attack.t1213
+  - owasp.api1
+logsource:
+  category: application
+  product: appsec-lab
+  service: target_api
+correlation:
+  type: value_count
+  rules:
+    - bola_enumeration_events
+  group-by:
+    - user.id
+  timespan: 10m
+  condition:
+    gt: 25
+    field: appsec.resource_id
+falsepositives:
+  - Batch or reporting jobs that scan many invoices (excluded by role batch_worker)
+  - Mobile retries touching 3 or fewer ids never reach the threshold
+level: high

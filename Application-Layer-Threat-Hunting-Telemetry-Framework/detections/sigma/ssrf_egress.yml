@@ -1,0 +1,105 @@
+title: SSRF - Outbound Request to Internal or Metadata Destination
+id: 1b6d3f8a-4e27-4c90-a5d1-7f2e9b0c8d21
+name: ssrf_internal_egress
+status: experimental
+description: >
+  Application egress to a loopback, link-local, or private destination, or to an
+  internal hostname. CIDRs and hostnames mirror ssrf.internal_cidrs and
+  ssrf.internal_hostnames in config/detections.yaml; the allowlist is empty.
+references:
+  - https://owasp.org/API-Security/editions/2023/en/0xa7-server-side-request-forgery/
+author: Application-Layer Threat Hunting Framework
+date: 2025-01-01
+tags:
+  - attack.initial-access
+  - attack.credential-access
+  - attack.t1190
+  - attack.t1552.005
+  - owasp.api7
+logsource:
+  category: application
+  product: appsec-lab
+  service: target_api
+detection:
+  selection:
+    event.dataset: appsec.egress
+  internal_ip:
+    destination.ip|cidr:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 169.254.0.0/16
+      - 127.0.0.0/8
+  internal_host:
+    destination.domain:
+      - localhost
+      - metadata.internal
+      - metadata.google.internal
+      - target-api
+      - gateway
+      - opensearch
+      - dashboards
+      - otel-collector
+      - jupyter
+  condition: selection and (internal_ip or internal_host)
+falsepositives:
+  - Legitimate integrations with internal services (add them to ssrf.allowed_destination_hosts)
+  - Health checks or webhooks to approved private endpoints
+level: high
+---
+title: SSRF - Webhook Preview Request
+id: 9c4a7e2b-8d15-4f63-b0a9-5e1d3c6f7a22
+name: ssrf_preview_request
+status: experimental
+description: Inbound API request to the webhook preview endpoint. Inbound side of the SSRF join.
+author: Application-Layer Threat Hunting Framework
+date: 2025-01-01
+tags:
+  - attack.t1190
+  - owasp.api7
+logsource:
+  category: application
+  product: appsec-lab
+  service: target_api
+detection:
+  selection:
+    event.dataset: appsec.api
+    appsec.endpoint_template: /api/v1/webhooks/preview
+  condition: selection
+falsepositives:
+  - Normal webhook previews to public destinations (only meaningful when correlated)
+level: informational
+---
+title: SSRF - Preview Request Followed by Internal Egress on Same Trace
+id: 6d8b1e5c-3a49-4e72-9f0c-2b7a4d9e1c23
+status: experimental
+description: >
+  A webhook preview request and an internal-destination egress event sharing
+  the same trace.id within 5 seconds. Expresses the api/egress join that
+  OpenSearch monitors cannot perform; the monitor evaluates the denormalized
+  egress event instead.
+references:
+  - https://owasp.org/API-Security/editions/2023/en/0xa7-server-side-request-forgery/
+author: Application-Layer Threat Hunting Framework
+date: 2025-01-01
+tags:
+  - attack.initial-access
+  - attack.credential-access
+  - attack.t1190
+  - attack.t1552.005
+  - owasp.api7
+logsource:
+  category: application
+  product: appsec-lab
+  service: target_api
+correlation:
+  type: temporal
+  rules:
+    - ssrf_preview_request
+    - ssrf_internal_egress
+  group-by:
+    - trace.id
+  timespan: 5s
+falsepositives:
+  - Approved internal webhook targets not yet on the allowlist
+level: high

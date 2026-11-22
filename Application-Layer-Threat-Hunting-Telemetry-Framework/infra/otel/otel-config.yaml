@@ -1,0 +1,130 @@
+# Telemetry_Pipeline: scrub-before-export OTel Collector configuration.
+# Fail closed: only records sealed with appsec.scrub.status=ok reach OpenSearch.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+
+  # Derive salted hashes BEFORE the raw values are removed.
+  # appsec.jwt.jti is intentionally left untouched (plain JTI is required in the SIEM).
+  transform/enrich:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(attributes["appsec.tmp.token"], attributes["http.request.headers.authorization"]) where IsMatch(attributes["http.request.headers.authorization"], "^Bearer ")
+          - replace_pattern(attributes["appsec.tmp.token"], "^Bearer ", "") where attributes["appsec.tmp.token"] != nil
+          - set(attributes["appsec.jwt.token_hash"], SHA256(Concat(["${env:SCRUB_SALT}", attributes["appsec.tmp.token"]], ""))) where attributes["appsec.tmp.token"] != nil
+          - delete_key(attributes, "appsec.tmp.token")
+          - set(attributes["appsec.jwt.jti_hash"], Substring(SHA256(Concat(["${env:SCRUB_SALT}", attributes["appsec.jwt.jti"]], "")), 0, 16)) where attributes["appsec.jwt.jti"] != nil
+          - set(attributes["appsec.client_pair"], Concat([attributes["source.ip"], attributes["user_agent.original"]], "|")) where attributes["source.ip"] != nil and attributes["user_agent.original"] != nil
+
+  # Remove sensitive fields and redact stray Bearer / JWT-shaped strings.
+  transform/scrub:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - delete_key(attributes, "http.request.headers.authorization")
+          - delete_key(attributes, "appsec.credentials.password")
+          - replace_all_patterns(attributes, "value", "(?i)bearer\\s+[A-Za-z0-9._~+/=-]+", "[REDACTED]")
+          - replace_all_patterns(attributes, "value", "eyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]*", "[REDACTED]")
+          - set(body, "")
+
+  # Seal ONLY after verification. Any error or missed pattern leaves the record unsealed.
+  transform/seal:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - >-
+            set(attributes["appsec.scrub.status"], "ok")
+            where attributes["http.request.headers.authorization"] == nil
+            and attributes["appsec.credentials.password"] == nil
+            and not IsMatch(String(attributes), "(?i)bearer\\s+[A-Za-z0-9._~+/=-]+")
+            and not IsMatch(String(attributes), "eyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]*")
+            and not IsMatch(String(body), "(?i)bearer\\s+[A-Za-z0-9._~+/=-]+")
+            and not IsMatch(String(body), "eyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]*")
+
+  # Failed records keep only identifiers so nothing sensitive can be forwarded or logged.
+  transform/reduce:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - keep_keys(attributes, ["event.id", "trace.id"])
+          - set(body, "")
+
+  batch:
+    timeout: 1s
+    send_batch_size: 512
+
+connectors:
+  routing:
+    default_pipelines: [logs/scrub_failed]
+    error_mode: ignore
+    table:
+      - context: log
+        condition: attributes["appsec.scrub.status"] == "ok"
+        pipelines: [logs/export]
+
+  count:
+    logs:
+      appsec.scrub_failures:
+        description: Records that failed scrub verification and were dropped.
+
+exporters:
+  opensearch:
+    http:
+      endpoint: http://opensearch:9200
+    logs_index: appsec-telemetry
+    logs_index_time_format: yyyy.MM.dd
+    mapping:
+      mode: flatten_attributes
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 10s
+      max_elapsed_time: 120s
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+
+  debug:
+    verbosity: detailed
+
+service:
+  extensions: [health_check]
+  telemetry:
+    metrics:
+      level: basic
+  pipelines:
+    logs/ingest:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/enrich, transform/scrub, transform/seal]
+      exporters: [routing]
+    logs/export:
+      receivers: [routing]
+      processors: [batch]
+      exporters: [opensearch]
+    logs/scrub_failed:
+      receivers: [routing]
+      processors: [transform/reduce]
+      exporters: [count, debug]
+    metrics/scrub_failures:
+      receivers: [count]
+      exporters: [debug]
